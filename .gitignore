@@ -1,0 +1,4 @@
+/src/*.o
+*.vscode
+mydb
+test
