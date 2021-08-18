@@ -80,7 +80,7 @@ void file_sync(const std::string &file_name);
 void error(const char *s);
 
 // 
-// database.cpp
+// table.cpp
 //
 
 struct Table {
