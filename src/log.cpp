@@ -2,11 +2,12 @@
 
 // write (insert,update) log
 // w crc32(key+value) sizeof(key)+sizeof(value) key value
-// example) w (0x)12345678 (0x)18 aaa bbb \n
-// とりあえず改行で区切る
+// example) w (0x)12345678 (0x)18 aaa bbb 
 void LogManager::log(LogKind log_kind,const std::string &key,const std::string &value) {
-    unsigned int data_size = key.size() + value.size();
-    unsigned int check_sum = crc32(key+value);
+    unsigned int key_size = key.size();
+    unsigned int value_size = value.size();
+    std::string key_value_size = to_hex(key_size) + to_hex(value_size);
+    unsigned int check_sum = crc32(key_value_size+key+value);
     std::string buf = "";
 
     buf += LogKind2str(log_kind); // insert "i"
@@ -14,33 +15,24 @@ void LogManager::log(LogKind log_kind,const std::string &key,const std::string &
                                   // del    "d"
                                   // commit "c"
     buf += to_hex(check_sum);     // 8
-    buf += to_hex(data_size);     // 8
-    buf += " ";
+    buf += key_value_size;        // 16
     buf += key;
-    buf += " ";
     buf += value;
-    buf += "\n";
 
-    std::ofstream log_file;
-    log_file.open(log_file_name,std::ios::app);
-
-    if (!log_file) {
-        error("open(log_file)");
-    }
-
-    log_file << buf;
-    log_file.close();
+    log_file_output << buf;
 }
 
+void LogManager::log_flush() {
+    log_file_output << std::flush;
+}
 
 //logを消す
 void LogManager::erase_log() {
-    std::ofstream log_file;
-    log_file.open(log_file_name,std::ios::trunc);
-    if (!log_file) {
+    log_file_output.close();
+    log_file_output.open(log_file_name,std::ios::trunc);
+    if (!log_file_output) {
         error("open(log_file");
     }
-    log_file.close();
 }
 
 std::string LogKind2str(LogKind log_kind) {

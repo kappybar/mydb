@@ -21,6 +21,17 @@
 struct Table;
 
 //
+// util.cpp
+//
+
+void make_crc32table();
+unsigned int crc32(const std::string &s);
+std::string to_hex(unsigned int number);
+unsigned int from_hex(const std::string &s);
+void file_sync(const std::string &file_name);
+void error(const char *s);
+
+//
 // log.cpp
 //
 
@@ -33,9 +44,19 @@ enum struct LogKind {
 
 struct LogManager {
     std::string log_file_name;
+    std::ofstream log_file_output;
 
-    LogManager(std::string log_file_name) : log_file_name(log_file_name) {}
+    LogManager(std::string log_file_name) : log_file_name(log_file_name) {
+        log_file_output.open(log_file_name,std::ios::app);
+        if (!log_file_output) {
+            error("open(log_file)");
+        }
+    }
+    ~LogManager() {
+        log_file_output.close();
+    }
     void log(LogKind log_kind,const std::string &key,const std::string &value);
+    void log_flush();
     void erase_log();
 };
 
@@ -51,33 +72,35 @@ enum struct DataOpe {
     del,
 };
 
+enum struct DataState {
+    in_keys,
+    not_in_keys,
+};
+
+struct DataWrite {
+    DataState first_data_state;
+    DataOpe last_data_ope;
+    std::optional<std::string> value;
+};
+
 struct Transaction {
     Table *table; 
-    std::map<std::string,std::pair<DataOpe,std::optional<std::string>>> write_set;
+    std::map<std::string,DataWrite> write_set;
+    bool conditional_write_error;
 
     Transaction(Table *table)
         :table(table),
-         write_set({}) {}
+         write_set({}),
+         conditional_write_error(false) {}
 
     void begin();
-    void commit();
+    bool commit();
     void rollback();
     std::optional<std::string> select(const std::string &key);
     void insert(const std::string &key,const std::string &value);
     void update(const std::string &key,const std::string &value);
     void del(const std::string &key);
 };
-
-//
-// util.cpp
-//
-
-void make_crc32table();
-unsigned int crc32(const std::string &s);
-std::string to_hex(unsigned int number);
-unsigned int from_hex(const std::string &s);
-void file_sync(const std::string &file_name);
-void error(const char *s);
 
 // 
 // table.cpp

@@ -11,9 +11,11 @@ void Table::checkpointing() {
         error("open(data_file)");
     }
     for(auto [key,value] : index) {
-        data_file_tmp << key << " " << value << std::endl; //とりあえず適当に
+        data_file_tmp << key << " " << value << std::endl;
     }
     data_file_tmp.close();
+
+    file_sync(data_file_tmp_name);
 
     // rename
     if (rename(data_file_tmp_name.c_str(),data_file_name.c_str()) == -1) {
@@ -41,55 +43,48 @@ void Table::recovery() {
 
     while (!data_file.eof()) {
         std::string key,value;
-        data_file >> key; //　とりあえず
+        data_file >> key; 
         if(key.size() == 0) continue;
-        data_file >> value; // とりあえず
+        data_file >> value; 
         index[key] = value;
     }
 
     data_file.close();
 
-    std::ifstream log_file(log_manager.log_file_name);
-    if (!log_file) {
-        error("ifstream(log_file)");
+    std::ifstream log_file_input(log_manager.log_file_name);
+    if (!log_file_input) {
+        error("ifstream(log_file_input)");
     }
 
     std::map<std::string,std::pair<DataOpe,std::string>> write_set;
-    while (!log_file.eof()) {
-        std::string buf;
-        log_file >> buf;
-        if (buf.size() == 0) continue;
-        char mode = buf[0];
-        unsigned int checksum = from_hex(buf.substr(1,8));
-        // unsigned int datasize = from_hex(buf.substr(9,8)); 必要?
+    std::string buf;
+    getline(log_file_input,buf);
+    assert(log_file_input.eof());
+    size_t idx = 0;
+    while (idx < buf.size()) {
+        assert(idx+24 < buf.size());
+        char mode = buf[idx];
+        unsigned int checksum   = from_hex(buf.substr(idx+1,8));
+        std::string keysize_str = buf.substr(idx+9,8);
+        std::string valuesize_str = buf.substr(idx+17,8);
+        unsigned int keysize   = from_hex(keysize_str);
+        unsigned int valuesize = from_hex(valuesize_str);
+
+        assert(idx+24+keysize+valuesize < buf.size());
+        std::string key = buf.substr(idx+25,keysize);
+        std::string value = buf.substr(idx+25+keysize,valuesize);
+
+        if (crc32(keysize_str + valuesize_str + key + value) != checksum) {
+            break;
+        }
+        idx += 25 + keysize + valuesize;
 
         if (mode == 'i') {
-            std::string key,value;
-            log_file >> key >> value;
-
-            if (checksum == crc32(key+value)) {
-                write_set[key] = make_pair(DataOpe::insert,value);
-            } else {
-                assert(false); //?
-            }
+            write_set[key] = make_pair(DataOpe::insert,value);
         } else if (mode == 'u') {
-            std::string key,value;
-            log_file >> key >> value;
-
-            if (checksum == crc32(key+value)) {
-                write_set[key] = make_pair(DataOpe::update,value);
-            } else {
-                assert(false); //?
-            }
+            write_set[key] = make_pair(DataOpe::update,value);
         } else if(mode == 'd') {
-            std::string key;
-            log_file >> key;
-
-            if (checksum == crc32(key+"")) {
-                write_set[key] = make_pair(DataOpe::del,std::string("")); 
-            } else {
-                assert(false); //?
-            }
+            write_set[key] = make_pair(DataOpe::del,value);
         } else {
             assert(mode == 'c');
             for (auto [key,mode_value] : write_set) {
@@ -105,6 +100,7 @@ void Table::recovery() {
             write_set.clear();
         }
     }
+    log_file_input.close();
 
     //logを消す。
     log_manager.erase_log();

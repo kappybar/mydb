@@ -13,7 +13,7 @@ void util_test() {
         assert(crc2 == 0xc655f3e6);
     }
     {
-        //from_oct to_oct
+        //from_hex to_hex
         unsigned int number1 = 0x9fa83c09;
         std::string s1 = "9fa83c09";
         assert(from_hex(s1) == number1);
@@ -37,32 +37,29 @@ void log_test() {
         log_manager.log(LogKind::update,key,value);
         log_manager.log(LogKind::del,key,"");
         log_manager.log(LogKind::commit,"","");
-        std::vector<std::string> str(10);
-        str[0] = "i" + to_hex(crc32(key + value)) + to_hex(key.size() + value.size());
-        str[1] = key;
-        str[2] = value;
-        str[3] = "u" + to_hex(crc32(key + value)) + to_hex(key.size() + value.size());
-        str[4] = key;
-        str[5] = value;
-        str[6] = "d" + to_hex(crc32(key)) + to_hex(key.size());
-        str[7] = key;
-        str[8] = "c" + to_hex(crc32("")) + to_hex(0);
-        str[9] = "";
-        int i = 0;
+        log_manager.log_flush();
+
+        unsigned int key_size = key.size();
+        unsigned int value_size = value.size();
+        unsigned int check_sum1 = crc32(to_hex(key_size)+to_hex(value_size)+key+value);
+        unsigned int check_sum2 = crc32(to_hex(key_size)+to_hex(0)+key);
+        unsigned int check_sum3 = crc32(to_hex(0)+to_hex(0));
+        std::string buf = "";
+        buf += LogKind2str(LogKind::insert) + to_hex(check_sum1) + to_hex(key_size) + to_hex(value_size) + key + value; 
+        buf += LogKind2str(LogKind::update) + to_hex(check_sum1) + to_hex(key_size) + to_hex(value_size) + key + value;
+        buf += LogKind2str(LogKind::del)    + to_hex(check_sum2) + to_hex(key_size) + to_hex(0)          + key;
+        buf += LogKind2str(LogKind::commit) + to_hex(check_sum3) + to_hex(0)        + to_hex(0);
         std::ifstream log_file(log_file_name);
-        while (!log_file.eof()) {
-            assert(i < (int)str.size());
-            std::string tmp;
-            log_file >> tmp;
-            assert(tmp == str[i++]);
-        }
+        std::string log;
+        getline(log_file,log);
+        assert(log == buf);
         log_file.close();
         remove(log_file_name.c_str());
     }
     std::cerr << "log_test success!" << std::endl;
 }
 
-void database_test() {
+void table_test() {
     {
         std::string data_file_name = "data1.txt";
         std::string log_file_name = "log1.txt";
@@ -84,6 +81,7 @@ void database_test() {
         table.log_manager.log(LogKind::insert,"key3","value3");
         table.log_manager.log(LogKind::insert,"key4","value4");
         table.log_manager.log(LogKind::commit,"","");
+        table.log_manager.log_flush();
 
         //電源on
         table.index.clear();
@@ -109,6 +107,7 @@ void database_test() {
         table.log_manager.log(LogKind::update,"key1","value1_new");
         table.log_manager.log(LogKind::del,"key2","");
         table.log_manager.log(LogKind::commit,"","");
+        table.log_manager.log_flush();
 
         //電源on
         table.index.clear();
@@ -132,6 +131,7 @@ void database_test() {
         table.log_manager.log(LogKind::insert,"key4","value4");
         table.log_manager.log(LogKind::update,"key1","value1_new");
         table.log_manager.log(LogKind::del,"key2","");
+        table.log_manager.log_flush();
         // commitされていないからこのlogは無視する。
 
         //電源on
@@ -143,7 +143,7 @@ void database_test() {
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
-    std::cerr << "database_test success!" << std::endl;
+    std::cerr << "table_test success!" << std::endl;
 }
 
 // 同時に一つのtransaction
@@ -156,7 +156,7 @@ void transaction_test() {
         txn.begin();
         txn.insert("key1","value1");
         txn.insert("key2","value2");
-        txn.commit();
+        assert(txn.commit());
         assert(txn.write_set.size() == 0);
         assert(txn.table->index.size() == 2);
         assert(txn.table->index["key1"] == "value1");
@@ -181,7 +181,7 @@ void transaction_test() {
         assert(table.index["key2"] == "value2");
 
         // commit
-        txn.commit();
+        assert(txn.commit());
         assert(table.index.size() == 2);
         assert(table.index["key1"] == "value1_new");
         assert(table.index["key3"] == "value3");
@@ -205,7 +205,7 @@ void transaction_test() {
         assert(txn.select("key2") == std::nullopt);
         assert(txn.select("key3") == "value3");
 
-        txn.commit();
+        assert(txn.commit());
         remove(log_file_name.c_str());
     }
     {
@@ -222,6 +222,50 @@ void transaction_test() {
         assert(table.index.size() == 2);
         assert(table.index["key1"] == "value1");
         assert(table.index["key2"] == "value2");
+
+        remove(log_file_name.c_str());
+    }
+    {
+        std::string data_file_name = "data1.txt";
+        std::string log_file_name = "log1.txt";
+        Table table(data_file_name,log_file_name);
+        table.index["key1"] = "value1";
+        table.index["key2"] = "value2";
+        Transaction txn(&table);
+        txn.begin();
+        txn.update("key3","value3");
+        assert(!txn.commit());
+        txn.begin();
+        txn.insert("key1","value1_new");
+        assert(!txn.commit());
+        txn.begin();
+        txn.del("key4");
+        assert(!txn.commit());
+        assert(table.index.size() == 2);
+        assert(table.index["key1"] == "value1");
+        assert(table.index["key2"] == "value2");
+
+        remove(log_file_name.c_str());
+    }
+    {
+        std::string data_file_name = "data1.txt";
+        std::string log_file_name = "log1.txt";
+        Table table(data_file_name,log_file_name);
+        table.index["key1"] = "value1";
+        table.index["key2"] = "value2";
+        Transaction txn(&table);
+        txn.begin();
+        txn.del("key1");
+        txn.insert("key1","value1_new");
+        txn.update("key2","value2");
+        txn.del("key2");
+        txn.insert("key2","value2_new");
+        assert(txn.commit());
+        assert(table.index.size() == 2);
+        assert(table.index["key1"] == "value1_new");
+        assert(table.index["key2"] == "value2_new");
+
+        remove(log_file_name.c_str());
     }
     std::cerr << "transaction_test success!" << std::endl;
 }
@@ -233,7 +277,7 @@ void transaction_test() {
 int main() {
     util_test();
     log_test();
-    database_test();
+    table_test();
     transaction_test();
     std::cerr << "all test success!" << std::endl;
     return 0;
