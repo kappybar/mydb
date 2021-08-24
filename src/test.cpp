@@ -161,6 +161,7 @@ void transaction_test() {
         assert(txn.table->index.size() == 2);
         assert(txn.table->index["key1"] == "value1");
         assert(txn.table->index["key2"] == "value2");
+        remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
@@ -185,6 +186,7 @@ void transaction_test() {
         assert(table.index.size() == 2);
         assert(table.index["key1"] == "value1_new");
         assert(table.index["key3"] == "value3");
+        remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
@@ -206,6 +208,7 @@ void transaction_test() {
         assert(txn.select("key3") == "value3");
 
         assert(txn.commit());
+        remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
@@ -222,7 +225,7 @@ void transaction_test() {
         assert(table.index.size() == 2);
         assert(table.index["key1"] == "value1");
         assert(table.index["key2"] == "value2");
-
+        remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
@@ -244,7 +247,7 @@ void transaction_test() {
         assert(table.index.size() == 2);
         assert(table.index["key1"] == "value1");
         assert(table.index["key2"] == "value2");
-
+        remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
@@ -264,7 +267,7 @@ void transaction_test() {
         assert(table.index.size() == 2);
         assert(table.index["key1"] == "value1_new");
         assert(table.index["key2"] == "value2_new");
-
+        remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     std::cerr << "transaction_test success!" << std::endl;

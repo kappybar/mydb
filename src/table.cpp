@@ -62,15 +62,18 @@ void Table::recovery() {
     assert(log_file_input.eof());
     size_t idx = 0;
     while (idx < buf.size()) {
-        assert(idx+24 < buf.size());
+        if (!(idx+24 < buf.size())) {
+            break;
+        }
         char mode = buf[idx];
         unsigned int checksum   = from_hex(buf.substr(idx+1,8));
         std::string keysize_str = buf.substr(idx+9,8);
         std::string valuesize_str = buf.substr(idx+17,8);
         unsigned int keysize   = from_hex(keysize_str);
         unsigned int valuesize = from_hex(valuesize_str);
-
-        assert(idx+24+keysize+valuesize < buf.size());
+        if (!(idx+24+keysize+valuesize < buf.size())) {
+            break;
+        }
         std::string key = buf.substr(idx+25,keysize);
         std::string value = buf.substr(idx+25+keysize,valuesize);
 
@@ -102,6 +105,5 @@ void Table::recovery() {
     }
     log_file_input.close();
 
-    //logを消す。
-    log_manager.erase_log();
+    checkpointing();
 }

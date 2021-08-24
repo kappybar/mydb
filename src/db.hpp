@@ -114,7 +114,15 @@ struct Table {
     Table(std::string data_file_name,std::string log_file_name)
         :index({}),
          data_file_name(data_file_name),
-         log_manager(LogManager(log_file_name)) {}
+         log_manager(LogManager(log_file_name)) 
+    {
+        std::ofstream data_file;
+        data_file.open(data_file_name,std::ios::app);
+        if (!data_file) {
+            error("open(data_file)");
+        }
+        data_file.close();
+    }
 
     void checkpointing(); 
     void recovery();  

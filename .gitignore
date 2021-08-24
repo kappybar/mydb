@@ -1,4 +1,4 @@
 /src/*.o
 *.vscode
 mydb
-test
+*test
