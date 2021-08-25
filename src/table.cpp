@@ -1,5 +1,33 @@
 #include "db.hpp"
 
+// <mode,key,value>
+std::optional<std::tuple<char,std::string,std::string>> log2data(size_t &idx,const std::string &buf) {
+    if (!(idx+24 < buf.size())) {
+        return std::nullopt;
+    }
+
+    char mode = buf[idx];
+    unsigned int checksum   = from_hex(buf.substr(idx+1,8));
+    std::string keysize_str = buf.substr(idx+9,8);
+    std::string valuesize_str = buf.substr(idx+17,8);
+    unsigned int keysize   = from_hex(keysize_str);
+    unsigned int valuesize = from_hex(valuesize_str);
+
+    if (!(idx+24+keysize+valuesize < buf.size())) {
+        return std::nullopt;
+    }
+
+    std::string key = buf.substr(idx+25,keysize);
+    std::string value = buf.substr(idx+25+keysize,valuesize);
+
+    if (crc32(keysize_str + valuesize_str + key + value) != checksum) {
+        return std::nullopt;
+    }
+
+    idx += 25 + keysize + valuesize;
+    return make_tuple(mode,key,value);
+}
+
 // database本体のファイルを更新する(atomicに,かなり雑?)。,walのlogを消す
 void Table::checkpointing() {
 
@@ -62,25 +90,11 @@ void Table::recovery() {
     assert(log_file_input.eof());
     size_t idx = 0;
     while (idx < buf.size()) {
-        if (!(idx+24 < buf.size())) {
+        auto data = log2data(idx,buf);
+        if (data == std::nullopt) {
             break;
-        }
-        char mode = buf[idx];
-        unsigned int checksum   = from_hex(buf.substr(idx+1,8));
-        std::string keysize_str = buf.substr(idx+9,8);
-        std::string valuesize_str = buf.substr(idx+17,8);
-        unsigned int keysize   = from_hex(keysize_str);
-        unsigned int valuesize = from_hex(valuesize_str);
-        if (!(idx+24+keysize+valuesize < buf.size())) {
-            break;
-        }
-        std::string key = buf.substr(idx+25,keysize);
-        std::string value = buf.substr(idx+25+keysize,valuesize);
-
-        if (crc32(keysize_str + valuesize_str + key + value) != checksum) {
-            break;
-        }
-        idx += 25 + keysize + valuesize;
+        } 
+        auto [mode,key,value] = data.value();
 
         if (mode == 'i') {
             write_set[key] = make_pair(DataOpe::insert,value);
