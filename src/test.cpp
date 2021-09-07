@@ -1,5 +1,5 @@
 #include "db.hpp"
-#include <iostream>
+#include <random>
 
 void util_test() {
     {
@@ -273,15 +273,322 @@ void transaction_test() {
     std::cerr << "transaction_test success!" << std::endl;
 }
 
-// void recovery_test() {
-//     ?
-// }
+
+void file_size_check(const std::string &file_name,unsigned int file_size_) {
+    assert(file_size(file_name) == file_size_);
+}
+
+void page_test(void) {
+    {
+        char buf[PAGESIZE] = {};
+        Page page(0,buf);
+        page.write("hello,world!1",checksum_len,13);
+        page.write("hello,world!2",100,13);
+        const char *res1 = page.read(checksum_len,13);
+        const char *res2 = page.read(100,13);
+        const char *res3 = page.read(105,8);
+        char page_right[PAGESIZE] = {};
+        strncpy(page_right+checksum_len,"hello,world!1",13);
+        strncpy(page_right+100,"hello,world!2",13);
+        assert(strcmp(res1,"hello,world!1") == 0);
+        assert(strcmp(res2,"hello,world!2") == 0);
+        assert(strcmp(res3,",world!2") == 0);
+        assert(strcmp(page_right,page.page) == 0);
+        assert(page.access == 1);
+        assert(page.dirty);
+        assert(page.pin_count == 0);
+        free(const_cast<char*>(res1));
+        free(const_cast<char*>(res2));
+        free(const_cast<char*>(res3));
+    }
+    {
+        char buf[PAGESIZE] = {};
+        Page page(0,buf);
+        page.write("hello,world!1",checksum_len,13);
+        page.write("hello,world!2",100,13);
+        page.update_checksum();
+        char page_right[PAGESIZE] = {};
+        strncpy(page_right+checksum_len,"hello,world!1",13);
+        strncpy(page_right+100,"hello,world!2",13);
+        int checksum = crc32(page_right+checksum_len,PAGESIZE-checksum_len);
+        strncpy(page_right,to_hex(checksum).c_str(),checksum_len);
+        assert(strcmp(page_right,page.page) == 0);
+    }
+    std::cerr << "page_test success!" << std::endl;
+}
+
+void disk_manager_test(void) {
+    std::string file_name = "disk_test.txt";
+    {
+        DiskManager disk_manager(file_name);
+        disk_manager.allocate_new_page();
+        disk_manager.allocate_new_page();
+        file_size_check(file_name,2 * PAGESIZE);
+        Page page = disk_manager.fetch_page(0);
+        page.write("hello,world!1",checksum_len,13);
+        page.write("hello,world!2",100,13);
+        disk_manager.write_page(0,page);
+        disk_manager.flush();
+        Page page_disk = disk_manager.fetch_page(0);
+        assert(strcmp(page.page,page_disk.page) == 0);
+        assert(disk_manager.page_num == 2);
+    }
+    {
+        DiskManager disk_manager(file_name);   
+        assert(disk_manager.page_num == 2);
+        Page page = disk_manager.fetch_page(1);
+        page.write("end of file!",4084,12);
+        disk_manager.write_page(1,page);
+        disk_manager.flush();
+        Page page_disk = disk_manager.fetch_page(1);
+        assert(strcmp(page.page,page_disk.page) == 0);
+    }
+    remove(file_name.c_str());
+    std::cerr << "disk_manager_test success!" << std::endl;
+}
+
+void buffer_manager_test(void) {
+    std::string file_name = "buffer_test.txt";
+    {
+        BufferManager buffer_manager(file_name);
+        int pageid0 = buffer_manager.create_new_page();
+        int pageid1 = buffer_manager.create_new_page();
+        assert(pageid0 == 0);
+        assert(pageid1 == 1);
+        buffer_manager.fetch_page(pageid0);
+        buffer_manager.fetch_page(pageid1);
+        assert(buffer_manager.pagetable.size() == 2);
+        assert(buffer_manager.pages[0].pageid == pageid0);
+        assert(buffer_manager.pages[1].pageid == pageid1);
+        assert(buffer_manager.pagetable.size() == 2);
+        assert(buffer_manager.pagetable[pageid0] == 0);
+        assert(buffer_manager.pagetable[pageid1] == 1);
+
+        buffer_manager.write_page(pageid0,"hello,world!0",checksum_len,13);
+        const char *buf = buffer_manager.read_page(pageid0,checksum_len,13);
+        assert(strcmp(buf,"hello,world!0") == 0);
+        free(const_cast<char*>(buf));
+        buffer_manager.write_page(pageid1,"hello,world!1",100,13);
+        buffer_manager.flush();
+        file_size_check(file_name,2 * PAGESIZE);
+    }
+    {
+        BufferManager buffer_manager(file_name);
+        int pageid2 = buffer_manager.create_new_page();
+        assert(pageid2 == 2);
+        const char *buf0 = buffer_manager.read_page(0,checksum_len,13);
+        const char *buf1 = buffer_manager.read_page(1,100,13);
+        assert(strcmp(buf0,"hello,world!0") == 0);
+        assert(strcmp(buf1,"hello,world!1") == 0);
+        free(const_cast<char*>(buf0));
+        free(const_cast<char*>(buf1));
+    }
+    {
+        BufferManager buffer_manager(file_name);
+        for(int i = 0;i < MAX_BUFFER_SIZE - 3; i++) {
+            buffer_manager.create_new_page();
+        }
+        for(int i = 0;i < MAX_BUFFER_SIZE; i++) {
+            buffer_manager.write_page(i,to_hex(i).c_str(),checksum_len,8);
+        }
+        assert((int)buffer_manager.pages.size() == MAX_BUFFER_SIZE);
+        assert((int)buffer_manager.pagetable.size() == MAX_BUFFER_SIZE);
+        for(int i = 0;i < MAX_BUFFER_SIZE; i++) {
+            assert(buffer_manager.pages[i].pageid == i);
+            assert(buffer_manager.pagetable[i] == i);
+        }
+        int pageid = buffer_manager.create_new_page();
+        buffer_manager.write_page(pageid,to_hex(pageid).c_str(),checksum_len,8);
+        assert((int)buffer_manager.pages.size() == MAX_BUFFER_SIZE);
+        assert((int)buffer_manager.pagetable.size() == MAX_BUFFER_SIZE);
+        assert(buffer_manager.pagetable[pageid] == 0);
+        assert(buffer_manager.pages[0].pageid == pageid);
+        buffer_manager.flush();
+        file_size_check(file_name,(MAX_BUFFER_SIZE + 1) * PAGESIZE);
+    }
+    {
+        BufferManager buffer_manager(file_name);
+        for(int i = 0;i < MAX_BUFFER_SIZE + 1; i++) {
+            const char *buf = buffer_manager.read_page(i,checksum_len,8);
+            assert(strcmp(buf,to_hex(i).c_str()) == 0);
+            free(const_cast<char*>(buf));
+        }
+    }
+    remove(file_name.c_str());
+    std::cerr << "buffer_manager_test success!" << std::endl;
+}
+
+void set_node( Node &node,
+               bool is_leaf,
+               int keys_size,
+               const std::vector<int> &child_pageid,
+               const std::vector<std::string> &keys,
+               const std::vector<std::string> &values) {
+    node.set_is_leaf(is_leaf);
+    node.set_keys_size(keys_size);
+    for(int i = 0;i < keys_size; i++) {
+        node.set_keys(i,keys[i]);
+        node.set_values(i,values[i]);
+    }
+    if(!is_leaf){
+        for(int i = 0;i < keys_size + 1; i++) {
+            node.set_child_pageid(i,child_pageid[i]);
+        }
+    }
+}
+
+void check_node( Node &node,
+                 bool is_leaf,
+                 int keys_size,
+                 const std::vector<int> &child_pageid,
+                 const std::vector<std::string> &keys,
+                 const std::vector<std::string> &values) {
+    assert(node.is_leaf() == is_leaf);
+    assert(node.keys_size() == keys_size);
+    for(int i = 0;i < keys_size; i++) {
+        assert(node.keys(i) == keys[i]);
+        assert(node.values(i) == values[i]);
+    }
+    if(!is_leaf){
+        for(int i = 0;i < keys_size + 1; i++) {
+            assert(node.child_pageid(i) == child_pageid[i]);
+        }
+    }
+}
+
+void node_test(void) {
+    std::string file_name = "node_test.txt";
+    {
+        BufferManager buffer_manager(file_name);
+        buffer_manager.create_new_page();
+        Node node(&buffer_manager,0);
+        node.set_is_leaf(false);
+        node.set_keys_size(1);
+        node.set_child_pageid(0,1);
+        node.set_child_pageid(1,2);
+        node.set_keys(0,"key");
+        node.set_values(0,"value");
+
+        check_node(node,false,1,{1,2},{"key"},{"value"});
+        assert(!node.isfull());
+        remove(file_name.c_str());
+    }
+    {
+        BufferManager buffer_manager(file_name);
+        int pageid0 = buffer_manager.create_new_page();   
+        int pageid1 = buffer_manager.create_new_page();
+        Node node0(&buffer_manager,pageid0);   
+        Node node1(&buffer_manager,pageid1);   
+        node0.set_is_leaf(true);
+        node0.set_keys_size(5);
+        for(int i = 0;i < 5;i++){
+            node0.set_keys(i,"key" + std::to_string(i));
+            node0.set_values(i,"value" + std::to_string(i));
+        }
+        node1.set_is_leaf(false);
+        node1.set_keys_size(0);
+        node1.set_child_pageid(0,pageid0);
+        node1.splitchild(0);
+
+        Node node2(&buffer_manager,2);
+        check_node(node0,true,2,{},{"key0","key1"},{"value0","value1"});
+        check_node(node1,false,1,{pageid0,2},{"key2"},{"value2"});
+        check_node(node2,true,2,{},{"key3","key4"},{"value3","value4"});
+        remove(file_name.c_str());
+    }
+    {
+        BufferManager buffer_manager(file_name);
+        int pageid0 = buffer_manager.create_new_page();
+        int pageid1 = buffer_manager.create_new_page();
+        int pageid2 = buffer_manager.create_new_page();
+        Node node0(&buffer_manager,pageid0);
+        Node node1(&buffer_manager,pageid1);
+        Node node2(&buffer_manager,pageid2);
+        set_node(node0,false,1,{pageid1,pageid2},{"key2"},{"value2"});
+        set_node(node1,true,2,{},{"key0","key1"},{"value0","value1"});
+        set_node(node2,true,2,{},{"key3","key4"},{"value3","value4"});
+        node0.rightshift(0);
+        node0.leftshift(0);
+        check_node(node0,false,1,{pageid1,pageid2},{"key2"},{"value2"});
+        check_node(node1,true,2,{},{"key0","key1"},{"value0","value1"});
+        check_node(node2,true,2,{},{"key3","key4"},{"value3","value4"});
+        remove(file_name.c_str());
+    }
+    {
+        BufferManager buffer_manager(file_name);
+        int pageid0 = buffer_manager.create_new_page();
+        int pageid1 = buffer_manager.create_new_page();
+        int pageid2 = buffer_manager.create_new_page();
+        int pageid3 = buffer_manager.create_new_page();
+        Node node0(&buffer_manager,pageid0);
+        Node node1(&buffer_manager,pageid1);
+        Node node2(&buffer_manager,pageid2);
+        Node node3(&buffer_manager,pageid3);
+        set_node(node0,false,2,{pageid1,pageid2,pageid3},{"key2","key5"},{"value2","value5"});
+        set_node(node1,true,2,{},{"key0","key1"},{"value0","value1"});
+        set_node(node2,true,2,{},{"key3","key4"},{"value3","value4"});
+        set_node(node3,true,2,{},{"key6","key7"},{"value6","value7"});
+        node0.merge(0);
+        check_node(node0,false,1,{pageid1,pageid3},{"key5"},{"value5"});
+        check_node(node1,true,5,{},{"key0","key1","key2","key3","key4"},{"value0","value1","value2","value3","value4"});
+        check_node(node3,true,2,{},{"key6","key7"},{"value6","value7"});
+        remove(file_name.c_str());
+    }
+    std::cerr << "node_test success!" << std::endl;
+}
+
+void btree_ondisk_test(void) {
+    std::string file_name = "btree_ondisk_test.txt";
+    std::map<std::string,std::string> mp;
+    {
+        BTree btree(file_name);
+        std::random_device seed_gen;
+        std::mt19937_64 rnd(seed_gen());
+        std::uniform_int_distribution<int> dist(0,1);
+        for(int i = 0;i < 10000; i++) {
+            btree.insert("key" + std::to_string(i),"value" + std::to_string(i));
+            mp["key" + std::to_string(i)] = "value" + std::to_string(i);
+        }
+        for(int i = 0;i < 10000; i+= 2) {
+            btree.update("key" + std::to_string(i),std::to_string(i));
+            mp["key" + std::to_string(i)] = std::to_string(i);
+        }
+        for(int i = 0;i < 10000; i++) {
+            int k = dist(rnd);
+            if (k == 0) {
+                assert(btree.del("key" + std::to_string(i)));
+                mp.erase("key" + std::to_string(i));
+            }
+        }
+        for(int i = 0;i < 10000; i++) {
+            std::optional<std::string> value = btree.search("key" + std::to_string(i));
+            if (value == std::nullopt) {
+                assert(mp.count("key" + std::to_string(i)) == 0);
+            } else {
+                std::string right_value = mp["key" + std::to_string(i)];
+                assert(value.value() == right_value);
+            }
+        }
+        assert(btree.all_data() == mp);
+    }
+    {
+        BTree btree2(file_name);
+        assert(btree2.all_data() == mp);
+    }
+    remove(file_name.c_str());
+    std::cerr << "btree_ondisk_test success!" << std::endl;
+} 
 
 int main() {
     util_test();
     log_test();
     table_test();
     transaction_test();
+    page_test();
+    disk_manager_test();
+    buffer_manager_test();
+    node_test();
+    btree_ondisk_test();
     std::cerr << "all test success!" << std::endl;
     return 0;
 }

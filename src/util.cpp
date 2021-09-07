@@ -34,6 +34,16 @@ unsigned int crc32(const std::string &s) {
     return crc ^ 0xffffffffu;
 }
 
+unsigned int crc32(const char *s,int len) {
+    if (!made_crc32table) {
+        make_crc32table();
+    }
+    unsigned int crc = 0xffffffffu; // 4byte bit reverse
+    for(int i = 0;i < len; i++) {
+        crc = crc32table[(crc ^ s[i]) & 0xff] ^ (crc >> 8);
+    }
+    return crc ^ 0xffffffffu;
+}
 
 std::string to_hex(unsigned int number) {
     std::ostringstream sout;
@@ -65,6 +75,20 @@ void file_sync(const std::string &file_name) {
     if (close(fd) == -1) {
         error("close(data_file)");
     }
+}
+
+unsigned int file_size(const std::string &file_name) {
+    int fd = open(file_name.c_str(),O_RDONLY);
+    if (fd == -1) {
+        error("open(file_size)");
+    }
+    struct stat buf;
+    fstat(fd, &buf);
+    off_t size = buf.st_size;
+    if (close(fd) == -1) {
+        error("close(file_size)");
+    }
+    return size;
 }
 
 void error(const char *s) {
