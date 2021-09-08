@@ -9,8 +9,8 @@ bool Transaction::commit() {
     // conditional writeの確認
     for(auto [key,data_write] : write_set) {
         auto [first_data_state, _, value] = data_write;
-        if ( (table->index.count(key) == 0 && first_data_state == DataState::in_keys) ||
-             (table->index.count(key) >  0 && first_data_state == DataState::not_in_keys) ) {
+        if ( (table->btree.search(key) == std::nullopt && first_data_state == DataState::in_keys) ||
+             (table->btree.search(key) != std::nullopt && first_data_state == DataState::not_in_keys) ) {
             conditional_write_error = true;
         }
         (void)_;
@@ -48,13 +48,21 @@ bool Transaction::commit() {
         auto [ _, last_data_ope, value] = data_write;
         if (last_data_ope == DataOpe::insert) {
             assert(value);
-            table->index[key] = value.value();
+            if (table->btree.search(key) == std::nullopt) {
+                table->btree.insert(key,value.value());
+            } else {
+                table->btree.update(key,value.value());
+            }
         } else if (last_data_ope == DataOpe::update) {
             assert(value);
-            table->index[key] = value.value();
+            if (table->btree.search(key) == std::nullopt) {
+                table->btree.insert(key,value.value());
+            } else {
+                table->btree.update(key,value.value());
+            }
         } else {
             assert(last_data_ope == DataOpe::del);
-            table->index.erase(key);
+            table->btree.del(key);
         }
         (void)_;
     }
@@ -76,10 +84,9 @@ std::optional<std::string> Transaction::select(const std::string &key) {
         } else {
             return std::nullopt;
         }
-    } else if (table->index.count(key) > 0) {
-        return table->index[key];
+    } else {
+        return table->btree.search(key);
     }
-    return std::nullopt;
 }
 
 void Transaction::insert(const std::string &key,const std::string &value) {

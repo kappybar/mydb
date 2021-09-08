@@ -32,3 +32,10 @@ int DiskManager::allocate_new_page(void) {
     }
     return pageid;
 }
+
+void DiskManager::clear_file(void) {
+    if (truncate(file_name.c_str(),0) == -1) {
+        error("truncate(clear_file)");
+    }
+    page_num = 0;
+}

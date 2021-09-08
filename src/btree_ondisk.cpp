@@ -35,6 +35,20 @@ bool BTree::del(const std::string &key) {
     return success_del;
 }
 
+void BTree::clear(void) {
+    delete root;
+    buffer_manager.flush();
+    buffer_manager.disk_manager.clear_file();
+    buffer_manager.create_new_page();
+    root = new Node(&buffer_manager,0);
+    root->set_keys_size(0);
+    root->set_is_leaf(true);
+}
+
+void BTree::flush(void) {
+    buffer_manager.flush();
+}
+
 std::map<std::string,std::string> BTree::all_data(void) {
     return root->all_data();
 }

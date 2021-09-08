@@ -103,6 +103,7 @@ struct DiskManager {
     void write_page(int pageid,Page &page);
     void flush(void);
     int allocate_new_page(void);
+    void clear_file(void);
 };
 
 //
@@ -212,6 +213,8 @@ struct BTree {
     bool update(const std::string &key,const std::string &value);
     void insert(const std::string &key,const std::string &value);
     bool del(const std::string &key);
+    void clear(void);
+    void flush(void);
 
     std::map<std::string,std::string> all_data(void);
     void show();
@@ -293,12 +296,13 @@ struct Transaction {
 //
 
 struct Table {
-    std::map<std::string,std::string> index;
+    // std::map<std::string,std::string> index;
+    BTree btree;
     std::string data_file_name;
     LogManager log_manager;
 
-    Table(std::string data_file_name,std::string log_file_name)
-        :index({}),
+    Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name)
+        :btree(btree_file_name),
          data_file_name(data_file_name),
          log_manager(LogManager(log_file_name)) 
     {

@@ -31,6 +31,9 @@ std::optional<std::tuple<char,std::string,std::string>> log2data(size_t &idx,con
 // database本体のファイルを更新する(atomicに,かなり雑?)。,walのlogを消す
 void Table::checkpointing() {
 
+    // btree flush
+    btree.flush();
+
     // tmp_data_fileに書き込み
     std::string data_file_tmp_name = "tmp_" + data_file_name;
     std::ofstream data_file_tmp;
@@ -38,7 +41,7 @@ void Table::checkpointing() {
     if (!data_file_tmp) {
         error("open(data_file)");
     }
-    for(auto [key,value] : index) {
+    for(auto [key,value] : btree.all_data()) {
         data_file_tmp << key << " " << value << std::endl;
     }
     data_file_tmp.close();
@@ -62,7 +65,13 @@ void Table::checkpointing() {
 // そうでないときdatabase本体からdataを読んでin memory のindexに入れる。
 // walのlogを消す。
 void Table::recovery() {
-    assert(index.size() == 0);
+    // assert(index.size() == 0);
+
+    if (file_size(log_manager.log_file_name) == 0) {
+        return;
+    }
+
+    btree.clear();
 
     std::ifstream data_file(data_file_name);
     if (!data_file) {
@@ -74,7 +83,7 @@ void Table::recovery() {
         data_file >> key; 
         if(key.size() == 0) continue;
         data_file >> value; 
-        index[key] = value;
+        btree.insert(key,value);
     }
 
     data_file.close();
@@ -108,10 +117,16 @@ void Table::recovery() {
                 DataOpe mode = mode_value.first;
                 std::string value = mode_value.second;
                 if (mode == DataOpe::update || mode == DataOpe::insert) {
-                    index[key] = value;
+                    if (btree.search(key) == std::nullopt) {
+                        btree.insert(key,value);
+                    } else {
+                        btree.update(key,value);
+                    }
                 } else {
                     assert(mode == DataOpe::del);
-                    index.erase(key);
+                    if (btree.search(key) != std::nullopt) {
+                        btree.del(key);
+                    }
                 }
             }
             write_set.clear();

@@ -60,12 +60,13 @@ void log_test() {
 }
 
 void table_test() {
+    std::string btree_file_name = "btree1.txt";
+    std::string data_file_name = "data1.txt";
+    std::string log_file_name = "log1.txt";
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         table.checkpointing();
         std::vector<std::string> str = {"key1","value1","key2","value2",""};
         int i = 0;
@@ -84,22 +85,22 @@ void table_test() {
         table.log_manager.log_flush();
 
         //電源on
-        table.index.clear();
+        table.btree.clear();
         table.recovery();
-        assert(table.index.size() == 4);
-        assert(table.index["key1"] == "value1");
-        assert(table.index["key2"] == "value2");
-        assert(table.index["key3"] == "value3");
-        assert(table.index["key4"] == "value4");
+        auto index = table.btree.all_data();
+        assert(index.size() == 4);
+        assert(index["key1"] == "value1");
+        assert(index["key2"] == "value2");
+        assert(index["key3"] == "value3");
+        assert(index["key4"] == "value4");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         table.checkpointing();
 
         table.log_manager.log(LogKind::insert,"key3","value3");
@@ -110,21 +111,21 @@ void table_test() {
         table.log_manager.log_flush();
 
         //電源on
-        table.index.clear();
+        table.btree.clear();
         table.recovery();
-        assert(table.index.size() == 3);
-        assert(table.index["key1"] == "value1_new");
-        assert(table.index["key3"] == "value3");
-        assert(table.index["key4"] == "value4");
+        auto index = table.btree.all_data();
+        assert(index.size() == 3);
+        assert(index["key1"] == "value1_new");
+        assert(index["key3"] == "value3");
+        assert(index["key4"] == "value4");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         table.checkpointing();
 
         table.log_manager.log(LogKind::insert,"key3","value3");
@@ -135,11 +136,13 @@ void table_test() {
         // commitされていないからこのlogは無視する。
 
         //電源on
-        table.index.clear();
+        table.btree.clear();
         table.recovery();
-        assert(table.index.size() == 2);
-        assert(table.index["key1"] == "value1");
-        assert(table.index["key2"] == "value2");
+        auto index = table.btree.all_data();
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1");
+        assert(index["key2"] == "value2");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
@@ -148,28 +151,29 @@ void table_test() {
 
 // 同時に一つのtransaction
 void transaction_test() {
-    {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
+    std::string btree_file_name = "btree1.txt";
+    std::string data_file_name = "data1.txt";
+    std::string log_file_name = "log1.txt";
+    {   
+        Table table(btree_file_name,data_file_name,log_file_name);
         Transaction txn(&table);
         txn.begin();
         txn.insert("key1","value1");
         txn.insert("key2","value2");
         assert(txn.commit());
         assert(txn.write_set.size() == 0);
-        assert(txn.table->index.size() == 2);
-        assert(txn.table->index["key1"] == "value1");
-        assert(txn.table->index["key2"] == "value2");
+        auto index = txn.table->btree.all_data(); 
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1");
+        assert(index["key2"] == "value2");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         Transaction txn(&table);
         txn.begin();
         txn.update("key1","value1_new");
@@ -177,24 +181,25 @@ void transaction_test() {
         txn.del("key2");
 
         // 未commit
-        assert(table.index.size() == 2);
-        assert(table.index["key1"] == "value1");
-        assert(table.index["key2"] == "value2");
+        auto index = table.btree.all_data();
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1");
+        assert(index["key2"] == "value2");
 
         // commit
         assert(txn.commit());
-        assert(table.index.size() == 2);
-        assert(table.index["key1"] == "value1_new");
-        assert(table.index["key3"] == "value3");
+        index = table.btree.all_data();
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1_new");
+        assert(index["key3"] == "value3");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         Transaction txn(&table);
         txn.begin();
         assert(txn.select("key1") == "value1");
@@ -208,32 +213,31 @@ void transaction_test() {
         assert(txn.select("key3") == "value3");
 
         assert(txn.commit());
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         Transaction txn(&table);
         txn.begin();
         txn.update("key1","value1_new");
         txn.insert("key3","value3");
         txn.rollback();
-        assert(table.index.size() == 2);
-        assert(table.index["key1"] == "value1");
-        assert(table.index["key2"] == "value2");
+        auto index = table.btree.all_data();
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1");
+        assert(index["key2"] == "value2");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         Transaction txn(&table);
         txn.begin();
         txn.update("key3","value3");
@@ -244,18 +248,18 @@ void transaction_test() {
         txn.begin();
         txn.del("key4");
         assert(!txn.commit());
-        assert(table.index.size() == 2);
-        assert(table.index["key1"] == "value1");
-        assert(table.index["key2"] == "value2");
+        auto index = table.btree.all_data();
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1");
+        assert(index["key2"] == "value2");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
     {
-        std::string data_file_name = "data1.txt";
-        std::string log_file_name = "log1.txt";
-        Table table(data_file_name,log_file_name);
-        table.index["key1"] = "value1";
-        table.index["key2"] = "value2";
+        Table table(btree_file_name,data_file_name,log_file_name);
+        table.btree.insert("key1","value1");
+        table.btree.insert("key2","value2");
         Transaction txn(&table);
         txn.begin();
         txn.del("key1");
@@ -264,9 +268,11 @@ void transaction_test() {
         txn.del("key2");
         txn.insert("key2","value2_new");
         assert(txn.commit());
-        assert(table.index.size() == 2);
-        assert(table.index["key1"] == "value1_new");
-        assert(table.index["key2"] == "value2_new");
+        auto index = table.btree.all_data();
+        assert(index.size() == 2);
+        assert(index["key1"] == "value1_new");
+        assert(index["key2"] == "value2_new");
+        remove(btree_file_name.c_str());
         remove(data_file_name.c_str());
         remove(log_file_name.c_str());
     }
@@ -574,6 +580,9 @@ void btree_ondisk_test(void) {
     {
         BTree btree2(file_name);
         assert(btree2.all_data() == mp);
+        btree2.clear();
+        auto index = btree2.all_data();
+        assert(index.size() == 0);
     }
     remove(file_name.c_str());
     std::cerr << "btree_ondisk_test success!" << std::endl;
