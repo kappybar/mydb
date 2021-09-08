@@ -1,9 +1,10 @@
 #include "db.hpp"
 
 int main() {
+    std::string btree_file_name = "btree1.txt";
     std::string data_file_name = "data1.txt";
     std::string log_file_name = "log1.txt";
-    Table table(data_file_name,log_file_name);
+    Table table(btree_file_name,data_file_name,log_file_name);
     table.recovery();
 
     Transaction txn1(&table);
@@ -16,7 +17,7 @@ int main() {
 
     Transaction txn2(&table);
     txn2.begin();
-    for(int i = 11;i < 1000000; i++) {
+    for(int i = 11;i < 100000; i++) {
         txn2.insert(std::to_string(i),std::to_string(i));
     }
     std::cerr << "commit2 start" << std::endl;
