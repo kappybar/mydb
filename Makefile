@@ -1,5 +1,5 @@
-CXX = g++
-CXXFLAGS = -Wall -std=gnu++17 -g -fsanitize=leak
+CXX = g++-11
+CXXFLAGS = -Wall -std=gnu++20 -g -fsanitize=leak
 SRCS   = $(wildcard src/*.cpp)
 OBJS   = $(SRCS:.cpp=.o)
 DBSRCS = $(filter-out %test.cpp,$(SRCS))

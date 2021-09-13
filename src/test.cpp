@@ -294,8 +294,8 @@ void page_test(void) {
         const char *res2 = page.read(100,13);
         const char *res3 = page.read(105,8);
         char page_right[PAGESIZE] = {};
-        strncpy(page_right+checksum_len,"hello,world!1",13);
-        strncpy(page_right+100,"hello,world!2",13);
+        strncpy(page_right+checksum_len,"hello,world!1",14);
+        strncpy(page_right+100,"hello,world!2",14);
         assert(strcmp(res1,"hello,world!1") == 0);
         assert(strcmp(res2,"hello,world!2") == 0);
         assert(strcmp(res3,",world!2") == 0);
@@ -314,8 +314,8 @@ void page_test(void) {
         page.write("hello,world!2",100,13);
         page.update_checksum();
         char page_right[PAGESIZE] = {};
-        strncpy(page_right+checksum_len,"hello,world!1",13);
-        strncpy(page_right+100,"hello,world!2",13);
+        strncpy(page_right+checksum_len,"hello,world!1",14);
+        strncpy(page_right+100,"hello,world!2",14);
         int checksum = crc32(page_right+checksum_len,PAGESIZE-checksum_len);
         strncpy(page_right,to_hex(checksum).c_str(),checksum_len);
         assert(strcmp(page_right,page.page) == 0);
