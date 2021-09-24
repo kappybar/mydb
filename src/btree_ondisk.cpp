@@ -30,7 +30,7 @@ bool BTree::del(const std::string &key) {
         const char *page_buf = buffer_manager.read_page(pageid,checksum_len,PAGESIZE - checksum_len);
         buffer_manager.write_page(root->pageid,page_buf,checksum_len,PAGESIZE - checksum_len);
         free(const_cast<char*>(page_buf));
-        // pageidはこれから使われなくなる
+        // we don't use pageid's page from now on
     }
     return success_del;
 }

@@ -353,7 +353,6 @@ struct DataWrite {
 //
 
 struct Table {
-    // std::map<std::string,std::string> index;
     BTree btree;
     std::string data_file_name;
     LogManager log_manager;
@@ -400,7 +399,7 @@ struct Transaction {
          txn_state(TransactionState::Execute)
     {
         table->transactions.push_back(this);
-        //table->transactionsに同じtxnidのtransaction_flowがいるのでそれに追加する。
+        // table->tasksに同じtxnidのmy_taskがいる。
     }
 
     int begin();
@@ -467,10 +466,11 @@ struct my_task {
             }
 
             std::optional<std::string> await_resume() {
+                // resumeした直後にする処理
                 // return select result;
                 if (key == std::nullopt) { // update insert del
                     return std::nullopt;
-                } else {
+                } else { // select
                     return txn->get_value(key.value());
                 }
             }

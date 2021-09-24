@@ -344,7 +344,7 @@ void Node::merge(int index) {
     }
     set_keys_size(node_keys_size - 1);
 
-    // child1' pageはこれから使われなくなる。
+    // we don't use child1' page from now on
 }
 
 std::pair<std::string,std::string> Node::delete_max_data(void) {

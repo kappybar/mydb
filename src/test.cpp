@@ -661,8 +661,8 @@ my_task transaction2(Table *table) {
 my_task transaction3(Table *table) {
     Transaction txn(table);
     co_yield txn.begin();
-    co_await txn.insert("key3","value3"); 
-    co_await txn.insert("key4","value3"); 
+    co_await txn.insert("key3","value3"); // getlock
+    co_await txn.insert("key4","value3"); // wait
     auto v3 = co_await txn.select("key3");
     auto v4 = co_await txn.select("key4");
     assert(v3.value() == "value3");
@@ -674,8 +674,8 @@ my_task transaction3(Table *table) {
 my_task transaction4(Table *table) {
     Transaction txn(table);
     co_yield txn.begin();
-    co_await txn.insert("key4","value4"); 
-    co_await txn.insert("key3","value4"); 
+    co_await txn.insert("key4","value4"); // getlock
+    co_await txn.insert("key3","value4"); // abort wait-die 
     auto v3 = co_await txn.select("key3");
     auto v4 = co_await txn.select("key4");
     assert(v3.value() == "value4");

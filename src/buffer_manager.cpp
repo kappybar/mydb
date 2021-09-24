@@ -62,6 +62,6 @@ int BufferManager::evict(void) {
         }
         pages[victim_index].access = 0;
     }
-    //evictできない
+    // we cannot evict page
     assert(false);
 }

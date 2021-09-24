@@ -28,13 +28,15 @@ std::optional<std::tuple<char,std::string,std::string>> log2data(size_t &idx,con
     return make_tuple(mode,key,value);
 }
 
-// database本体のファイルを更新する(atomicに,かなり雑?)。,walのlogを消す
+// flush  btree
+// update database dump file
+// erase wal
 void Table::checkpointing() {
 
     // btree flush
     btree.flush();
 
-    // tmp_data_fileに書き込み
+    // write tmp_data_file
     std::string data_file_tmp_name = "tmp_" + data_file_name;
     std::ofstream data_file_tmp;
     data_file_tmp.open(data_file_tmp_name,std::ios::trunc);
@@ -56,16 +58,15 @@ void Table::checkpointing() {
     // fsync
     file_sync(data_file_name);
 
-    // logを消す
+    // erase log
     log_manager.erase_log();
 }
 
-// 電源をonしたときにwalにlogが残っていればそのlogから
-// database本体のファイルを復元
-// そうでないときdatabase本体からdataを読んでin memory のindexに入れる。
-// walのlogを消す。
+// 電源をonしたときにwalにlogが残っていればそのlogとdatabase dump fileから
+// database本体のファイルとbtreeを復元
+// walのlogを消してcheckpointingする。
+// そうでないときそのままbtreeをを使う。
 void Table::recovery() {
-    // assert(index.size() == 0);
 
     if (file_size(log_manager.log_file_name) == 0) {
         return;

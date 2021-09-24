@@ -12,7 +12,7 @@ int Transaction::begin() {
 
 bool Transaction::commit() {
 
-    // conditional writeの確認
+    // confirm conditional write
     for(auto [key,data_write] : write_set) {
         auto [first_data_state, _, value] = data_write;
         if ( (table->btree.search(key) == std::nullopt && first_data_state == DataState::in_keys) ||
@@ -47,7 +47,7 @@ bool Transaction::commit() {
     // flush
     table->log_manager.log_flush();
 
-    // btree indexを更新
+    // update btree index
     // conditional write
     for(auto [key,data_write] : write_set) {
         auto [ _, last_data_ope, value] = data_write;
@@ -128,8 +128,7 @@ std::optional<std::string> Transaction::get_value(const std::string &key) {
 }
 
 
-// transactionのselectは返したものをどこかに保管しておく?(read set)
-// 複数transactionがあるときに考慮するべき
+
 void Transaction::select_internal(const std::string &key) {
     if (read_set.count(key) > 0 || write_set.count(key) > 0) {
         return;
