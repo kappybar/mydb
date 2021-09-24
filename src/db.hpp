@@ -5,11 +5,14 @@
 #include <optional>
 #include <vector>
 #include <fstream>
+#include <deque>
+#include <set>
 #include <memory>
 #include <sstream>
 #include <iomanip>
-#include <vector>
 #include <iostream>
+#include <utility>
+#include <coroutine>
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
@@ -19,7 +22,10 @@
 #include <unistd.h>
 #include <string.h>
 
-struct Table;
+
+struct my_task;
+struct Transaction;
+using result = std::pair<Transaction*,std::optional<std::string>>;
 
 //
 // util.cpp
@@ -34,6 +40,60 @@ void file_sync(const std::string &file_name);
 unsigned int file_size(const std::string &file_name);
 void error(const char *s);
 
+//
+// lock_manager.cpp
+//
+
+enum struct LockKind {
+    Share,
+    Exclusive,
+};
+
+struct Lock {
+    LockKind lock_kind;
+
+    // used when lock_kind = Exclusive
+    int txnid;
+
+    // used when lock_kind = Share
+    int txnnum;
+    std::set<int> readers;
+
+    Lock() {}
+    Lock(LockKind lock_kind,int txnid)
+        :lock_kind(lock_kind),
+         txnid(txnid),
+         txnnum(0) {}
+    Lock(LockKind lock_kind,int txnnum,const std::set<int>& readers)
+        :lock_kind(lock_kind),
+         txnid(-1),
+         txnnum(txnnum),
+         readers(readers) {}
+
+    bool has_shared_lock(void);
+    bool has_exclusive_lock(void);
+    void add_reader(int txnid);
+    void delete_reader(int txnid);
+    bool has_priority(int txnid_); // if Lock.txnid has higher priority than txnid  return true 
+};
+
+Lock Lock_shared(int txnid);
+Lock Lock_exclusive(int txnid);
+
+enum struct TryLockResult {
+    GetLock,
+    Wait,
+    Abort,
+};
+
+struct LockManager {
+    std::map<std::string,Lock> lock_table;
+
+    TryLockResult try_shared_lock(const std::string& s,int txnid);
+    TryLockResult try_exclusive_lock(const std::string& s,int txnid);
+    TryLockResult try_upgrade_lock(const std::string& s,int txnid);
+    void unlock(const std::string& s,int txnid);
+};
 
 //
 // page.cpp
@@ -256,6 +316,7 @@ std::string LogKind2str(LogKind log_kind);
 //
 
 enum struct DataOpe {
+    select,
     insert,
     update,
     del,
@@ -266,29 +327,25 @@ enum struct DataState {
     not_in_keys,
 };
 
+enum struct TransactionState {
+    Execute,
+    Wait,
+    Abort,
+};
+
 struct DataWrite {
     DataState first_data_state;
     DataOpe last_data_ope;
     std::optional<std::string> value;
-};
 
-struct Transaction {
-    Table *table; 
-    std::map<std::string,DataWrite> write_set;
-    bool conditional_write_error;
-
-    Transaction(Table *table)
-        :table(table),
-         write_set({}),
-         conditional_write_error(false) {}
-
-    void begin();
-    bool commit();
-    void rollback();
-    std::optional<std::string> select(const std::string &key);
-    void insert(const std::string &key,const std::string &value);
-    void update(const std::string &key,const std::string &value);
-    void del(const std::string &key);
+    DataWrite()
+        :first_data_state(DataState::in_keys),
+         last_data_ope(DataOpe::select),
+         value(std::nullopt) {}
+    DataWrite(DataState first_data_state,DataOpe last_data_ope,std::optional<std::string> value)
+        :first_data_state(first_data_state),
+         last_data_ope(last_data_ope),
+         value(value) {}
 };
 
 // 
@@ -300,11 +357,15 @@ struct Table {
     BTree btree;
     std::string data_file_name;
     LogManager log_manager;
+    LockManager lock_manager;
+    std::vector<my_task> tasks;
+    std::vector<Transaction*> transactions;
 
     Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name)
         :btree(btree_file_name),
          data_file_name(data_file_name),
-         log_manager(LogManager(log_file_name)) 
+         log_manager(LogManager(log_file_name)),
+         lock_manager(LockManager()) 
     {
         std::ofstream data_file;
         data_file.open(data_file_name,std::ios::app);
@@ -316,5 +377,147 @@ struct Table {
 
     void checkpointing(); 
     void recovery();  
-     
+    void add_transaction(my_task&& txn_flow);
+    void start(void);
+};
+
+struct Transaction {
+    Table *table; 
+    std::map<std::string,DataWrite> write_set;
+    std::map<std::string,std::optional<std::string>> read_set;
+    bool conditional_write_error;
+    int txnid;
+    TransactionState txn_state;
+    DataOpe waiting_dataope;
+    std::string waiting_key;
+    std::string waiting_value;
+
+    Transaction(Table *table)
+        :table(table),
+         write_set({}),
+         conditional_write_error(false),
+         txnid(-1),
+         txn_state(TransactionState::Execute)
+    {
+        table->transactions.push_back(this);
+        //table->transactionsに同じtxnidのtransaction_flowがいるのでそれに追加する。
+    }
+
+    int begin();
+    bool commit();
+    void rollback();
+    result select(const std::string &key);
+    result insert(const std::string &key,const std::string &value);
+    result update(const std::string &key,const std::string &value);
+    result del(const std::string &key);
+
+    std::optional<std::string> get_value(const std::string &key);
+    void select_internal(const std::string &key);
+    void insert_internal(const std::string &key,const std::string &value);
+    void update_internal(const std::string &key,const std::string &value);
+    void del_internal(const std::string &key);
+    void exec_waiting_dataope(void);
+    void unlock(void);
+};
+
+// concurrent
+
+struct my_task {
+    struct promise_type {
+        int txnid;
+
+        static auto get_return_object_on_allocation_failure() { 
+            return my_task{nullptr}; 
+        }
+
+        auto get_return_object() { 
+            return my_task{handle::from_promise(*this)}; 
+        }
+
+        auto initial_suspend() { 
+            return std::suspend_always{}; 
+        }
+
+        auto final_suspend() noexcept { 
+            return std::suspend_always{}; 
+        }
+
+        void unhandled_exception() { 
+            std::terminate(); 
+        }
+
+        void return_void() {}
+
+        auto yield_value(int txnid_) {
+            txnid = txnid_;
+            return std::suspend_always{};
+        }
+        // co_yield e = co_await p.yield_value(e);
+
+        struct awaiter {
+            Transaction *txn;
+            std::optional<std::string> key;
+
+            awaiter(Transaction *txn,std::optional<std::string> key) : txn(txn), key(key) {}
+
+            bool await_ready() const { 
+                // true  -> continue execution
+                // false -> suspend  execution
+                return false;
+            }
+
+            std::optional<std::string> await_resume() {
+                // return select result;
+                if (key == std::nullopt) { // update insert del
+                    return std::nullopt;
+                } else {
+                    return txn->get_value(key.value());
+                }
+            }
+
+            void await_suspend(std::coroutine_handle<> h) {
+                // suspendした直後にする処理。次のawait_resumeの準備をする.
+            }
+            // * image *
+            // co_await e = {
+            //     awaiter aw = await_transform(e);
+            //     if (aw.await_ready()) {
+            //         I continue co_routine
+            //     } else {
+            //         I suspend co_routine
+            //         aw.await_suspend(coro);
+            //         ...
+            //         when I return co_routine
+            //         aw.await_resume();
+            //     }
+            // }
+        };
+
+        awaiter await_transform(result result) {
+            return awaiter(result.first,result.second);
+        }
+    };
+    using handle = std::coroutine_handle<promise_type>;
+    bool move_next() { 
+        return can_move() ? (coro.resume(), !coro.done()) : false; 
+    }
+
+    bool can_move() { 
+        return coro && !coro.done(); 
+    }
+
+    int txnid(void) { 
+        return coro.promise().txnid; 
+    }
+
+    void destroy_handle(void) { 
+        if (coro) coro.destroy(); 
+    }
+
+    my_task(my_task const&) = delete;
+    my_task(my_task && rhs) : coro(rhs.coro) { rhs.coro = nullptr; }
+    ~my_task() { destroy_handle(); }
+private:
+    my_task(handle h) : coro(h) {}
+    handle coro;
 };

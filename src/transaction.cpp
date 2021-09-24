@@ -1,7 +1,13 @@
 #include "db.hpp"
 
-void Transaction::begin() {
-    ;
+int fresh_txnid(void) {
+    static int fresh = 0;
+    return fresh++;
+}
+
+int Transaction::begin() {
+    txnid = fresh_txnid();
+    return txnid;
 }
 
 bool Transaction::commit() {
@@ -17,7 +23,7 @@ bool Transaction::commit() {
     }
 
     if (conditional_write_error) {
-        write_set.clear();
+        rollback();
         return false;
     }
 
@@ -41,9 +47,8 @@ bool Transaction::commit() {
     // flush
     table->log_manager.log_flush();
 
-    // in memory indexを更新
+    // btree indexを更新
     // conditional write
-    // b-treeにしたときはここを変える？
     for(auto [key,data_write] : write_set) {
         auto [ _, last_data_ope, value] = data_write;
         if (last_data_ope == DataOpe::insert) {
@@ -67,61 +72,195 @@ bool Transaction::commit() {
         (void)_;
     }
 
-    write_set.clear();
+    // SS2PL
+    unlock();
     return true;
 }
 
 void Transaction::rollback() {
-    write_set.clear();
+    unlock();
 }
 
-// transactionのselectは返したものをどこかに保管しておく?(read set)
-// 複数transactionがあるときに考慮するべき
-std::optional<std::string> Transaction::select(const std::string &key) {
-    if (write_set.count(key) > 0) { 
+void Transaction::unlock() {
+    for (auto [key, _] : write_set) {
+        table->lock_manager.unlock(key,txnid);
+        (void)_;
+    }
+    for (auto [key, _] : read_set) {
+        table->lock_manager.unlock(key,txnid);
+        (void)_;
+    }
+    write_set.clear();
+    read_set.clear();
+}
+
+result Transaction::select(const std::string &key) {
+    select_internal(key);
+    return make_pair(this,key);
+}
+
+result Transaction::insert(const std::string &key,const std::string &value) {
+    insert_internal(key,value);
+    return make_pair(this,std::nullopt);
+}
+
+result Transaction::update(const std::string &key,const std::string &value) {
+    update_internal(key,value);
+    return make_pair(this,std::nullopt);
+}
+    
+result Transaction::del(const std::string &key) {
+    del_internal(key);
+    return make_pair(this,std::nullopt);
+}
+
+std::optional<std::string> Transaction::get_value(const std::string &key) {
+    if (read_set.count(key) > 0) {
+        return read_set[key];
+    } else if (write_set.count(key) > 0) {
         if (write_set[key].last_data_ope != DataOpe::del) {
             return write_set[key].value;
         } else {
             return std::nullopt;
         }
+    }
+    assert(false);
+}
+
+
+// transactionのselectは返したものをどこかに保管しておく?(read set)
+// 複数transactionがあるときに考慮するべき
+void Transaction::select_internal(const std::string &key) {
+    if (read_set.count(key) > 0 || write_set.count(key) > 0) {
+        return;
     } else {
-        return table->btree.search(key);
+        TryLockResult res = table->lock_manager.try_shared_lock(key,txnid);
+        switch (res) {
+            case TryLockResult::GetLock:
+                txn_state = TransactionState::Execute;
+                read_set[key] = table->btree.search(key); 
+                return;
+            case TryLockResult::Wait:
+                txn_state = TransactionState::Wait;
+                waiting_dataope = DataOpe::select;
+                waiting_key = key;
+                return;
+            case TryLockResult::Abort:
+                txn_state = TransactionState::Abort;
+                return;
+            default:
+                assert(false);
+        }
     }
 }
 
-void Transaction::insert(const std::string &key,const std::string &value) {
+void Transaction::insert_internal(const std::string &key,const std::string &value) {
     if (write_set.count(key) > 0 && write_set[key].last_data_ope != DataOpe::del) {
         conditional_write_error = true;
+    } else if (write_set.count(key) > 0) {
+        write_set[key] = DataWrite(write_set[key].first_data_state,DataOpe::insert,value);
     } else {
-        DataWrite data_write;
-        data_write.first_data_state = write_set.count(key) > 0 ? write_set[key].first_data_state : DataState::not_in_keys;
-        data_write.last_data_ope = DataOpe::insert;
-        data_write.value = value;
-        write_set[key] = data_write;
+        // read_set.count(key) > 0 ||
+        // read_set.count(key) == 0 && write_set.count(key) == 0
+        TryLockResult res = table->lock_manager.try_exclusive_lock(key,txnid);
+        switch (res) {
+            case TryLockResult::GetLock:
+                txn_state = TransactionState::Execute;
+                read_set.erase(key);
+                write_set[key] = DataWrite(DataState::not_in_keys,DataOpe::insert,value);
+                break;
+            case TryLockResult::Wait:
+                txn_state = TransactionState::Wait;
+                waiting_dataope = DataOpe::insert;
+                waiting_key = key;
+                waiting_value = value;
+                break;
+            case TryLockResult::Abort:
+                txn_state = TransactionState::Abort;
+                break;
+            default:
+                assert(false);
+        }
     }
 }
 
-void Transaction::update(const std::string &key,const std::string &value) {
+void Transaction::update_internal(const std::string &key,const std::string &value) {
     if (write_set.count(key) > 0 && write_set[key].last_data_ope == DataOpe::del) {
         conditional_write_error = true;
+    } else if (write_set.count(key) > 0) {
+        write_set[key] = DataWrite(write_set[key].first_data_state,DataOpe::update,value);
     } else {
-        DataWrite data_write;
-        data_write.first_data_state = write_set.count(key) > 0 ? write_set[key].first_data_state : DataState::in_keys;
-        data_write.last_data_ope = DataOpe::update;
-        data_write.value = value;
-        write_set[key] = data_write;
+        // read_set.count(key) > 0 ||
+        // read_set.count(key) == 0 && write_set.count(key) == 0
+        TryLockResult res = table->lock_manager.try_exclusive_lock(key,txnid);
+        switch (res) {
+            case TryLockResult::GetLock:
+                txn_state = TransactionState::Execute;
+                read_set.erase(key);
+                write_set[key] = DataWrite(DataState::in_keys,DataOpe::update,value);
+                break;
+            case TryLockResult::Wait:
+                txn_state = TransactionState::Wait;
+                waiting_dataope = DataOpe::update;
+                waiting_key = key;
+                waiting_value = value;
+                break;
+            case TryLockResult::Abort:
+                txn_state = TransactionState::Abort;
+                break;
+            default:
+                assert(false);
+        }
     }
 }
 
-void Transaction::del(const std::string &key) {
+void Transaction::del_internal(const std::string &key) {
     if (write_set.count(key) > 0 && write_set[key].last_data_ope == DataOpe::del) {
         conditional_write_error = true;
+    } else if (write_set.count(key) > 0) {
+        write_set[key] = DataWrite(write_set[key].first_data_state,DataOpe::del,std::nullopt);
     } else {
-        DataWrite data_write;
-        data_write.first_data_state = write_set.count(key) > 0 ? write_set[key].first_data_state : DataState::in_keys;
-        data_write.last_data_ope = DataOpe::del;
-        data_write.value = std::nullopt;
-        write_set[key] = data_write; 
+        // read_set.count(key) > 0 ||
+        // read_set.count(key) == 0 && write_set.count(key) == 0
+        TryLockResult res = table->lock_manager.try_exclusive_lock(key,txnid);
+        switch (res) {
+            case TryLockResult::GetLock:
+                txn_state = TransactionState::Execute;
+                read_set.erase(key);
+                write_set[key] = DataWrite(DataState::in_keys,DataOpe::del,std::nullopt);
+                break;
+            case TryLockResult::Wait:
+                txn_state = TransactionState::Wait;
+                waiting_dataope = DataOpe::del;
+                waiting_key = key;
+                break;
+            case TryLockResult::Abort:
+                txn_state = TransactionState::Abort;
+                break;
+            default:
+                assert(false);
+        }
     }
 }
 
+void Transaction::exec_waiting_dataope(void) {
+    assert(txn_state == TransactionState::Wait);
+
+    switch (waiting_dataope) {
+        case DataOpe::select:
+            select_internal(waiting_key);
+            break;
+        case DataOpe::insert:
+            insert_internal(waiting_key,waiting_value);
+            break;
+        case DataOpe::update:
+            update_internal(waiting_key,waiting_value);
+            break;
+        case DataOpe::del:
+            del_internal(waiting_key);
+            break;
+        default:
+            assert(false);
+    }
+
+}

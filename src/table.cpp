@@ -136,3 +136,54 @@ void Table::recovery() {
 
     checkpointing();
 }
+
+void Table::add_transaction(my_task&& txn_flow) {
+    tasks.emplace_back(std::move(txn_flow));
+    bool ok = tasks.back().move_next(); // Transactionがsecondに代入される beginが実行される
+    assert(ok);
+    assert(tasks.back().txnid() == transactions.back()->txnid);
+}
+
+void Table::start(void) {
+    if (transactions.size() == 0) {
+        return;
+    }
+
+    size_t idx = 0;
+    int finish_txn_cnt = 0;
+    while (1) {
+        switch (transactions[idx]->txn_state) {
+            case TransactionState::Execute:
+                if (tasks[idx].can_move()) {
+                    tasks[idx].move_next();
+                    finish_txn_cnt = 0;
+                } else {
+                    ++finish_txn_cnt;
+                }
+                break;
+            case TransactionState::Wait:
+                transactions[idx]->exec_waiting_dataope();
+                finish_txn_cnt = 0;
+                break;
+            case TransactionState::Abort:
+                ++finish_txn_cnt;
+                break;
+            default:
+                assert(false);
+        }
+        if (transactions[idx]->txn_state == TransactionState::Abort) {
+            transactions[idx]->rollback();
+            tasks[idx].destroy_handle();
+        }
+        ++idx;
+        if (idx == transactions.size()) {
+            idx = 0;
+        }
+        if (finish_txn_cnt == static_cast<int>(transactions.size())) {
+            break;
+        }
+    }
+    transactions.clear();
+    tasks.clear();
+}
+
