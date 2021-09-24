@@ -28,6 +28,20 @@ std::optional<std::tuple<char,std::string,std::string>> log2data(size_t &idx,con
     return make_tuple(mode,key,value);
 }
 
+Table::Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name)
+    :btree(btree_file_name),
+     data_file_name(data_file_name),
+     log_manager(LogManager(log_file_name)),
+     lock_manager(LockManager()) 
+{
+    std::ofstream data_file;
+    data_file.open(data_file_name,std::ios::app);
+    if (!data_file) {
+        error("open(data_file)");
+    }
+    data_file.close();
+}
+
 // flush  btree
 // update database dump file
 // erase wal

@@ -1,5 +1,20 @@
 #include "db.hpp"
 
+Page::Page():pageid(-1),
+             dirty(false),
+             pin_count(0),
+             access(0) {}
+
+Page::Page(int pageid,const char page_[])
+    :pageid(pageid),
+     dirty(false),
+     pin_count(0),
+     access(0) 
+{
+    std::copy(page_,page_+PAGESIZE,page);
+}
+
+
 // must release memory after read 
 const char *Page::read(int offset,int len) {
     assert(offset + len <= PAGESIZE);

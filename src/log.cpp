@@ -1,5 +1,18 @@
 #include "db.hpp"
 
+LogManager::LogManager(std::string log_file_name) 
+    :log_file_name(log_file_name) 
+{
+    log_file_output.open(log_file_name,std::ios::app);
+    if (!log_file_output) {
+        error("open(log_file)");
+    }
+}
+
+LogManager::~LogManager() {
+    log_file_output.close();
+}
+
 // write (insert,update) log
 // w crc32(key+value) sizeof(key)+sizeof(value) key value
 // example) w (0x)12345678 (0x)18 aaa bbb 

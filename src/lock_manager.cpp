@@ -1,5 +1,18 @@
 #include "db.hpp"
 
+Lock::Lock() {}
+
+Lock::Lock(LockKind lock_kind,int txnid)
+    :lock_kind(lock_kind),
+     txnid(txnid),
+     txnnum(0) {}
+
+Lock::Lock(LockKind lock_kind,int txnnum,const std::set<int>& readers)
+    :lock_kind(lock_kind),
+     txnid(-1),
+     txnnum(txnnum),
+     readers(readers) {}
+
 Lock Lock_exclusive(int txnid) {
     return Lock(LockKind::Exclusive,txnid);
 }

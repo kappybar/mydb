@@ -59,16 +59,9 @@ struct Lock {
     int txnnum;
     std::set<int> readers;
 
-    Lock() {}
-    Lock(LockKind lock_kind,int txnid)
-        :lock_kind(lock_kind),
-         txnid(txnid),
-         txnnum(0) {}
-    Lock(LockKind lock_kind,int txnnum,const std::set<int>& readers)
-        :lock_kind(lock_kind),
-         txnid(-1),
-         txnnum(txnnum),
-         readers(readers) {}
+    Lock();
+    Lock(LockKind lock_kind,int txnid);
+    Lock(LockKind lock_kind,int txnnum,const std::set<int>& readers);
 
     bool has_shared_lock(void);
     bool has_exclusive_lock(void);
@@ -108,20 +101,8 @@ struct Page {
     int access;
     char page[PAGESIZE];
 
-    Page()
-        :pageid(-1),
-         dirty(false),
-         pin_count(0),
-         access(0) {}
-         
-    Page(int pageid,const char page_[])
-        :pageid(pageid),
-         dirty(false),
-         pin_count(0),
-         access(0)
-        {
-            std::copy(page_,page_+PAGESIZE,page);
-        }
+    Page();
+    Page(int pageid,const char page_[]);
 
     const char *read(int offset,int len);
     void write(const char buf[],int offset,int len);
@@ -140,24 +121,8 @@ struct DiskManager {
     std::fstream file_stream;
     int page_num;
 
-    DiskManager(const std::string &file_name)
-        :file_name(file_name)
-        {
-            std::ofstream output_file_stream;
-            output_file_stream.open(file_name,std::ios::app);
-            if(!output_file_stream) {
-                error("open(disk_manager)");
-            }
-            output_file_stream.close();
-            file_stream.open(file_name);
-            if (!file_stream) {
-                error("open(disk_manager)");
-            }
-            page_num = file_size(file_name) / PAGESIZE;
-        }
-    ~DiskManager() {
-        file_stream.close();
-    }
+    DiskManager(const std::string &file_name);
+    ~DiskManager();
 
     Page fetch_page(int pageid);
     void write_page(int pageid,Page &page);
@@ -178,16 +143,8 @@ struct BufferManager {
     std::map<int,int> pagetable;
     int victim_index_base;
 
-    BufferManager(const std::string &file_name)
-        :disk_manager(DiskManager(file_name)),
-         pages(),
-         pagetable(),
-         victim_index_base(0) {
-            pages.resize(MAX_BUFFER_SIZE);
-    }
-    ~BufferManager() {
-        flush();
-    }
+    BufferManager(const std::string &file_name);
+    ~BufferManager();
 
     void fetch_page(int pageid);
     int  create_new_page(void);
@@ -211,9 +168,7 @@ struct Node {
     //   keys[0]  keys[1]  keys[2]   keys[3]
     // c[0]    c[1]     c[2]     c[3]      c[4]
 
-    Node(BufferManager *buffer_manager,int pageid)
-        :buffer_manager(buffer_manager),
-         pageid(pageid) {}
+    Node(BufferManager *buffer_manager,int pageid);
 
     bool is_leaf(void);
     int keys_size(void);
@@ -253,22 +208,10 @@ struct Node {
 struct BTree {
     BufferManager buffer_manager;
     Node *root;  
-    BTree(const std::string &file_name)
-        :buffer_manager(BufferManager(file_name)) 
-    {
-        if (buffer_manager.disk_manager.page_num == 0) {
-            buffer_manager.create_new_page();
-            root = new Node(&buffer_manager,0);
-            root->set_keys_size(0);
-            root->set_is_leaf(true);
-        } else {
-            root = new Node(&buffer_manager,0);
-        }
-    }
-    ~BTree() {
-        if(root != nullptr) delete root;
-        buffer_manager.flush();
-    }
+
+    BTree(const std::string &file_name);
+    ~BTree();
+
     std::optional<std::string> search(const std::string &key);
     bool update(const std::string &key,const std::string &value);
     void insert(const std::string &key,const std::string &value);
@@ -295,15 +238,9 @@ struct LogManager {
     std::string log_file_name;
     std::ofstream log_file_output;
 
-    LogManager(std::string log_file_name) : log_file_name(log_file_name) {
-        log_file_output.open(log_file_name,std::ios::app);
-        if (!log_file_output) {
-            error("open(log_file)");
-        }
-    }
-    ~LogManager() {
-        log_file_output.close();
-    }
+    LogManager(std::string log_file_name);
+    ~LogManager();
+
     void log(LogKind log_kind,const std::string &key,const std::string &value);
     void log_flush();
     void erase_log();
@@ -360,19 +297,7 @@ struct Table {
     std::vector<my_task> tasks;
     std::vector<Transaction*> transactions;
 
-    Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name)
-        :btree(btree_file_name),
-         data_file_name(data_file_name),
-         log_manager(LogManager(log_file_name)),
-         lock_manager(LockManager()) 
-    {
-        std::ofstream data_file;
-        data_file.open(data_file_name,std::ios::app);
-        if (!data_file) {
-            error("open(data_file)");
-        }
-        data_file.close();
-    }
+    Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name);
 
     void checkpointing(); 
     void recovery();  
@@ -391,16 +316,7 @@ struct Transaction {
     std::string waiting_key;
     std::string waiting_value;
 
-    Transaction(Table *table)
-        :table(table),
-         write_set({}),
-         conditional_write_error(false),
-         txnid(-1),
-         txn_state(TransactionState::Execute)
-    {
-        table->transactions.push_back(this);
-        // table->tasksに同じtxnidのmy_taskがいる。
-    }
+    Transaction(Table *table);
 
     int begin();
     bool commit();

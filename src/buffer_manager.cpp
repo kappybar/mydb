@@ -2,6 +2,18 @@
 
 const int MAX_BUFFER_SIZE = 1000;
 
+BufferManager::BufferManager(const std::string &file_name)
+    :disk_manager(DiskManager(file_name)),
+     pages(),
+     pagetable(),
+     victim_index_base(0) 
+{
+        pages.resize(MAX_BUFFER_SIZE);
+}
+
+BufferManager::~BufferManager() {
+    flush();
+}
 
 void BufferManager::fetch_page(int pageid) {
     if (pagetable.count(pageid) > 0) {

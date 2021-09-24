@@ -20,6 +20,10 @@ const int valuesize_len = 8;
 const int order     = 6;  // order means the biggest chidlren size (odd number)
 const int halforder = (order - 1) / 2;
 
+Node::Node(BufferManager *buffer_manager,int pageid)
+        :buffer_manager(buffer_manager),
+         pageid(pageid) {}
+
 bool Node::is_leaf(void) {
     const char *buf = buffer_manager->read_page(pageid,checksum_len,is_leaf_len);
     bool is_leaf = (strcmp(buf,"1") == 0);

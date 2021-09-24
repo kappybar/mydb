@@ -1,5 +1,25 @@
 #include "db.hpp"
 
+DiskManager::DiskManager(const std::string &file_name)
+        :file_name(file_name)
+{
+    std::ofstream output_file_stream;
+    output_file_stream.open(file_name,std::ios::app);
+    if(!output_file_stream) {
+        error("open(disk_manager)");
+    }
+    output_file_stream.close();
+    file_stream.open(file_name);
+    if (!file_stream) {
+        error("open(disk_manager)");
+    }
+    page_num = file_size(file_name) / PAGESIZE;
+}
+
+DiskManager::~DiskManager() {
+    file_stream.close();
+}
+
 Page DiskManager::fetch_page(int pageid) {
     assert(pageid < page_num);
     file_stream.seekg(pageid * PAGESIZE,std::ios_base::beg);

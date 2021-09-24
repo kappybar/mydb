@@ -1,5 +1,23 @@
 #include "db.hpp"
 
+BTree::BTree(const std::string &file_name)
+    :buffer_manager(BufferManager(file_name)) 
+{
+    if (buffer_manager.disk_manager.page_num == 0) {
+        buffer_manager.create_new_page();
+        root = new Node(&buffer_manager,0);
+        root->set_keys_size(0);
+        root->set_is_leaf(true);
+    } else {
+        root = new Node(&buffer_manager,0);
+    }
+}
+
+BTree::~BTree() {
+    if(root != nullptr) delete root;
+    buffer_manager.flush();
+}
+
 std::optional<std::string> BTree::search(const std::string &key) {
     return root->search(key);
 }    

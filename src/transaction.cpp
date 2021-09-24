@@ -1,5 +1,16 @@
 #include "db.hpp"
 
+Transaction::Transaction(Table *table)
+    :table(table),
+     write_set({}),
+     conditional_write_error(false),
+     txnid(-1),
+     txn_state(TransactionState::Execute)
+{
+    table->transactions.push_back(this);
+    // table->tasksに同じtxnidのmy_taskがいる。
+}
+
 int fresh_txnid(void) {
     static int fresh = 0;
     return fresh++;
