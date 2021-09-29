@@ -22,10 +22,11 @@
 #include <unistd.h>
 #include <string.h>
 
-
 struct my_task;
 struct Transaction;
-using result = std::pair<Transaction*,std::optional<std::string>>;
+enum struct TryLockResult;
+struct DataOperation;
+using result = std::tuple<Transaction*,TryLockResult,DataOperation>;
 
 //
 // util.cpp
@@ -249,40 +250,40 @@ struct LogManager {
 std::string LogKind2str(LogKind log_kind);
 
 //
-// transaction.cpp
+// scheduler.cpp
 //
 
-enum struct DataOpe {
+enum struct OpeKind {
     select,
     insert,
     update,
     del,
 };
 
-enum struct DataState {
-    in_keys,
-    not_in_keys,
+struct DataOperation {
+    OpeKind ope_kind;
+    std::string key;
+    std::string value;
+
+    DataOperation(OpeKind ope_kind,const std::string &key,const std::string &value)
+        :ope_kind(ope_kind),
+         key(key),
+         value(value) {}
 };
 
-enum struct TransactionState {
+enum State {
     Execute,
     Wait,
-    Abort,
+    Done,
 };
 
-struct DataWrite {
-    DataState first_data_state;
-    DataOpe last_data_ope;
-    std::optional<std::string> value;
+struct Scheduler {
+    std::vector<my_task> tasks;
+    std::vector<Transaction*> transactions;
+    std::vector<State> states;
 
-    DataWrite()
-        :first_data_state(DataState::in_keys),
-         last_data_ope(DataOpe::select),
-         value(std::nullopt) {}
-    DataWrite(DataState first_data_state,DataOpe last_data_ope,std::optional<std::string> value)
-        :first_data_state(first_data_state),
-         last_data_ope(last_data_ope),
-         value(value) {}
+    void add_task(my_task &&task);
+    void start(void);
 };
 
 // 
@@ -294,15 +295,39 @@ struct Table {
     std::string data_file_name;
     LogManager log_manager;
     LockManager lock_manager;
-    std::vector<my_task> tasks;
-    std::vector<Transaction*> transactions;
+    Scheduler scheduler;
 
-    Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name);
+    Table(const std::string &btree_file_name,const std::string &data_file_name,const std::string &log_file_name);
 
     void checkpointing(); 
     void recovery();  
-    void add_transaction(my_task&& txn_flow);
+    void add_transaction(my_task&& task);
     void start(void);
+};
+
+
+//
+// transaction.cpp
+//
+
+enum struct DataState {
+    in_keys,
+    not_in_keys,
+};
+
+struct DataWrite {
+    DataState first_data_state;
+    OpeKind last_ope_kind;
+    std::optional<std::string> value;
+
+    DataWrite()
+        :first_data_state(DataState::in_keys),
+         last_ope_kind(OpeKind::select),
+         value(std::nullopt) {}
+    DataWrite(DataState first_data_state,OpeKind last_ope_kind,const std::optional<std::string> &value)
+        :first_data_state(first_data_state),
+         last_ope_kind(last_ope_kind),
+         value(value) {}
 };
 
 struct Transaction {
@@ -311,27 +336,22 @@ struct Transaction {
     std::map<std::string,std::optional<std::string>> read_set;
     bool conditional_write_error;
     int txnid;
-    TransactionState txn_state;
-    DataOpe waiting_dataope;
-    std::string waiting_key;
-    std::string waiting_value;
 
     Transaction(Table *table);
 
     int begin();
     bool commit();
-    void rollback();
+    bool rollback();
     result select(const std::string &key);
     result insert(const std::string &key,const std::string &value);
     result update(const std::string &key,const std::string &value);
     result del(const std::string &key);
 
     std::optional<std::string> get_value(const std::string &key);
-    void select_internal(const std::string &key);
-    void insert_internal(const std::string &key,const std::string &value);
-    void update_internal(const std::string &key,const std::string &value);
-    void del_internal(const std::string &key);
-    void exec_waiting_dataope(void);
+    TryLockResult select_internal(const std::string &key);
+    TryLockResult insert_internal(const std::string &key,const std::string &value);
+    TryLockResult update_internal(const std::string &key,const std::string &value);
+    TryLockResult del_internal(const std::string &key);
     void unlock(void);
 };
 
@@ -339,7 +359,18 @@ struct Transaction {
 
 struct my_task {
     struct promise_type {
-        int txnid;
+        int txnid_;
+        bool waiting_;
+        bool abort_;
+        bool commit_;
+        DataOperation data_operation_;
+
+        promise_type()
+            :txnid_(-1),
+             waiting_(false),
+             abort_(false),
+             commit_(false),
+             data_operation_(DataOperation(OpeKind::select,"","")) {}
 
         static auto get_return_object_on_allocation_failure() { 
             return my_task{nullptr}; 
@@ -363,17 +394,25 @@ struct my_task {
 
         void return_void() {}
 
-        auto yield_value(int txnid_) {
-            txnid = txnid_;
+        auto yield_value(int txnid) {
+            txnid_ = txnid;
+            return std::suspend_always{};
+        }
+
+        auto yield_value(bool commit) {
+            commit_ = commit;
+            abort_ = !commit;
             return std::suspend_always{};
         }
         // co_yield e = co_await p.yield_value(e);
 
         struct awaiter {
             Transaction *txn;
-            std::optional<std::string> key;
+            DataOperation data_operation;
 
-            awaiter(Transaction *txn,std::optional<std::string> key) : txn(txn), key(key) {}
+            awaiter(Transaction *txn,const DataOperation &data_operation)
+                :txn(txn), 
+                 data_operation(data_operation) {}
 
             bool await_ready() const { 
                 // true  -> continue execution
@@ -384,10 +423,12 @@ struct my_task {
             std::optional<std::string> await_resume() {
                 // resumeした直後にする処理
                 // return select result;
-                if (key == std::nullopt) { // update insert del
+                if (data_operation.ope_kind == OpeKind::select) {
+                    // select
+                    return txn->get_value(data_operation.key);
+                } else {
+                    // updata insert delete
                     return std::nullopt;
-                } else { // select
-                    return txn->get_value(key.value());
                 }
             }
 
@@ -409,8 +450,11 @@ struct my_task {
             // }
         };
 
-        awaiter await_transform(result result) {
-            return awaiter(result.first,result.second);
+        awaiter await_transform(const result &result) {
+            waiting_ = (get<1>(result)) == TryLockResult::Wait;
+            abort_ = (get<1>(result)) == TryLockResult::Abort;
+            data_operation_ = get<2>(result);
+            return awaiter(get<0>(result),get<2>(result));
         }
     };
     using handle = std::coroutine_handle<promise_type>;
@@ -423,7 +467,23 @@ struct my_task {
     }
 
     int txnid(void) { 
-        return coro.promise().txnid; 
+        return coro.promise().txnid_; 
+    }
+
+    bool waiting(void) {
+        return coro.promise().waiting_;
+    }
+
+    bool abort(void) {
+        return coro.promise().abort_;
+    }
+
+    bool commit(void) {
+        return coro.promise().commit_;
+    }
+
+    DataOperation data_operation(void) {
+        return coro.promise().data_operation_;
     }
 
     void destroy_handle(void) { 

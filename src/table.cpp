@@ -28,7 +28,7 @@ std::optional<std::tuple<char,std::string,std::string>> log2data(size_t &idx,con
     return make_tuple(mode,key,value);
 }
 
-Table::Table(std::string btree_file_name,std::string data_file_name,std::string log_file_name)
+Table::Table(const std::string &btree_file_name,const std::string &data_file_name,const std::string &log_file_name)
     :btree(btree_file_name),
      data_file_name(data_file_name),
      log_manager(LogManager(log_file_name)),
@@ -108,7 +108,7 @@ void Table::recovery() {
         error("ifstream(log_file_input)");
     }
 
-    std::map<std::string,std::pair<DataOpe,std::string>> write_set;
+    std::map<std::string,std::pair<OpeKind,std::string>> write_set;
     std::string buf;
     getline(log_file_input,buf);
     assert(log_file_input.eof());
@@ -121,24 +121,24 @@ void Table::recovery() {
         auto [mode,key,value] = data.value();
 
         if (mode == 'i') {
-            write_set[key] = make_pair(DataOpe::insert,value);
+            write_set[key] = make_pair(OpeKind::insert,value);
         } else if (mode == 'u') {
-            write_set[key] = make_pair(DataOpe::update,value);
+            write_set[key] = make_pair(OpeKind::update,value);
         } else if(mode == 'd') {
-            write_set[key] = make_pair(DataOpe::del,value);
+            write_set[key] = make_pair(OpeKind::del,value);
         } else {
             assert(mode == 'c');
             for (auto [key,mode_value] : write_set) {
-                DataOpe mode = mode_value.first;
+                OpeKind mode = mode_value.first;
                 std::string value = mode_value.second;
-                if (mode == DataOpe::update || mode == DataOpe::insert) {
+                if (mode == OpeKind::update || mode == OpeKind::insert) {
                     if (btree.search(key) == std::nullopt) {
                         btree.insert(key,value);
                     } else {
                         btree.update(key,value);
                     }
                 } else {
-                    assert(mode == DataOpe::del);
+                    assert(mode == OpeKind::del);
                     if (btree.search(key) != std::nullopt) {
                         btree.del(key);
                     }
@@ -152,53 +152,10 @@ void Table::recovery() {
     checkpointing();
 }
 
-void Table::add_transaction(my_task&& txn_flow) {
-    tasks.emplace_back(std::move(txn_flow));
-    bool ok = tasks.back().move_next(); // Transactionがsecondに代入される beginが実行される
-    assert(ok);
-    assert(tasks.back().txnid() == transactions.back()->txnid);
+void Table::add_transaction(my_task&& task) {
+    scheduler.add_task(std::move(task));
 }
 
 void Table::start(void) {
-    if (transactions.size() == 0) {
-        return;
-    }
-
-    size_t idx = 0;
-    int finish_txn_cnt = 0;
-    while (1) {
-        switch (transactions[idx]->txn_state) {
-            case TransactionState::Execute:
-                if (tasks[idx].can_move()) {
-                    tasks[idx].move_next();
-                    finish_txn_cnt = 0;
-                } else {
-                    ++finish_txn_cnt;
-                }
-                break;
-            case TransactionState::Wait:
-                transactions[idx]->exec_waiting_dataope();
-                finish_txn_cnt = 0;
-                break;
-            case TransactionState::Abort:
-                ++finish_txn_cnt;
-                break;
-            default:
-                assert(false);
-        }
-        if (transactions[idx]->txn_state == TransactionState::Abort) {
-            transactions[idx]->rollback();
-            tasks[idx].destroy_handle();
-        }
-        ++idx;
-        if (idx == transactions.size()) {
-            idx = 0;
-        }
-        if (finish_txn_cnt == static_cast<int>(transactions.size())) {
-            break;
-        }
-    }
-    transactions.clear();
-    tasks.clear();
+    scheduler.start();
 }
-
