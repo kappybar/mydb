@@ -156,6 +156,6 @@ void Table::add_transaction(my_task&& task) {
     scheduler.add_task(std::move(task));
 }
 
-void Table::start(void) {
-    scheduler.start();
+std::vector<bool> Table::exec_transaction(void) {
+    return scheduler.start();
 }

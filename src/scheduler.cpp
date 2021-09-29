@@ -6,10 +6,10 @@ void Scheduler::add_task(my_task &&task) {
     // transactionsのemplace_backはtransaction.begin()のタイミングで行われる。
 }
 
-void Scheduler::start(void) {
+std::vector<bool> Scheduler::start(void) {
     int tasks_size = static_cast<int>(tasks.size());
     if (tasks_size == 0) {
-        return;
+        return {};
     }
 
     int finish_task_count = 0;
@@ -82,8 +82,15 @@ void Scheduler::start(void) {
         ++idx;
         if (idx == tasks_size) idx = 0;
     }
+
+    std::vector<bool> commit(tasks_size,false);
+    for (int i = 0;i < tasks_size; i++) {
+        commit[i] = tasks[i].commit();
+    }
     tasks.clear();
     states.clear();
     transactions.clear();
+
+    return commit;
 }
 

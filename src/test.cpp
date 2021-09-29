@@ -699,6 +699,28 @@ my_task transaction5(Table *table) {
     co_return;
 }
 
+my_task transaction6(Table *table) {
+    Transaction txn(table);
+    std::random_device seed_gen;
+    std::mt19937_64 rnd(seed_gen());
+    std::uniform_int_distribution<int> dist(0,100);
+
+    co_yield txn.begin();
+
+    for (int i = 0;i < 100; i++) {
+        std::string key = std::to_string(dist(rnd));
+        auto value = co_await txn.select(key);
+        if (value == std::nullopt) {
+            co_await txn.insert(key,key);
+        } else {
+            co_await txn.update(key,key);
+        }
+    }
+
+    co_yield txn.commit();
+    co_return;
+}
+
 void concurrent_test(void) {
     std::string btree_file_name = "btree1.txt";
     std::string data_file_name = "data1.txt";
@@ -710,29 +732,45 @@ void concurrent_test(void) {
         // transaction1 commit
         table.add_transaction(transaction1(&table));
         table.add_transaction(transaction2(&table));
-        table.start();
+        auto commit = table.exec_transaction();
         auto index = table.btree.all_data();
         assert(index.size() == 2);
         assert(index["key1"] == "value1");
         assert(index["key2"] == "value1");
+        assert(commit[0] && commit[1]);
 
         // transaction4 abort wait-die
         // transaction3 commit 
         table.add_transaction(transaction3(&table));
         table.add_transaction(transaction4(&table));
-        table.start();
+        commit = table.exec_transaction();
         index = table.btree.all_data();
         assert(index.size() == 4);
         assert(index["key1"] == "value1");
         assert(index["key2"] == "value1");
         assert(index["key3"] == "value3");
         assert(index["key4"] == "value3");
+        assert(commit[0] && !commit[1]);
 
         // transaction5 commit
         // transaction5 commit
         table.add_transaction(transaction5(&table));
         table.add_transaction(transaction5(&table));
-        table.start();
+        commit = table.exec_transaction();
+        assert(commit[0] && commit[1]);
+
+        remove(btree_file_name.c_str());
+        remove(data_file_name.c_str());
+        remove(log_file_name.c_str());
+    }
+    {
+        // deadlock prevention
+        Table table(btree_file_name,data_file_name,log_file_name);
+        
+        for (int i = 0;i < 100; i++) {
+            table.add_transaction(transaction6(&table));
+        }
+        table.exec_transaction();
 
         remove(btree_file_name.c_str());
         remove(data_file_name.c_str());

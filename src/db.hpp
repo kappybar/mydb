@@ -283,7 +283,7 @@ struct Scheduler {
     std::vector<State> states;
 
     void add_task(my_task &&task);
-    void start(void);
+    std::vector<bool> start(void); // return true if txn commit 
 };
 
 // 
@@ -302,7 +302,7 @@ struct Table {
     void checkpointing(); 
     void recovery();  
     void add_transaction(my_task&& task);
-    void start(void);
+    std::vector<bool> exec_transaction(void);
 };
 
 
