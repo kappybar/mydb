@@ -1,16 +1,22 @@
 CXX = g++-11
 CXXFLAGS = -Wall -std=gnu++20 -g -fsanitize=leak
+
 SRCS   = $(wildcard src/*.cpp)
 OBJS   = $(SRCS:.cpp=.o)
-DBSRCS = $(filter-out %test.cpp,$(SRCS))
+BASESRCS = $(filter-out %test.cpp %main.cpp,$(SRCS))
+BASEOBJS = $(BASESRCS:.cpp=.o)
+
+DBSRCS = $(BASESRCS)
+DBSRCS += src/main.cpp
 DBOBJS = $(DBSRCS:.cpp=.o)
-TESTSRCS = $(filter-out %crash_test.cpp %main.cpp,$(SRCS))
+TESTSRCS = $(BASESRCS) 
+TESTSRCS += src/test.cpp
 TESTOBJS = $(TESTSRCS:.cpp=.o)
-CTESTSRCS = $(filter-out %main.cpp,$(DBSRCS))
+CTESTSRCS = $(BASESRCS)
 CTESTSRCS += src/crash_test.cpp
 CTESTOBJS = $(CTESTSRCS:.cpp=.o)
 
-all: mydb test
+all: mydb test crash_test
 
 mydb: $(DBOBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
@@ -21,10 +27,14 @@ test: $(TESTOBJS)
 crash_test: $(CTESTOBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
+# examples/*.cpp
+%: $(BASEOBJS) examples/%.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+	
 %.o: src/%.cpp
 	$(CXX) -c $(CXXFLAGS) -o $@ $<
 
 clean:
-	rm mydb test crash_test $(OBJS) 
+	rm mydb test crash_test example1 example2 example3 $(OBJS) examples/*.o
 
 .PHONY: clean all

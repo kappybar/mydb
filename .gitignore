@@ -1,4 +1,9 @@
 /src/*.o
+/examples/*.o
 *.vscode
 mydb
 *test
+*.txt
+example1
+example2
+example3
